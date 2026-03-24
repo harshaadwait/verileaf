@@ -11,8 +11,11 @@ Endpoints:
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from typing import Annotated
+
+from pydantic import ValidationError
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -21,12 +24,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_db
 from app.models.models import ComplianceDiscrepancy
+from app.models.models import Location
 from app.models.schemas import (
     GreenlineSaleWebhook,
+    BlazeSaleWebhook,
     AcknowledgeDiscrepancy,
     ReportRequest,
 )
 from app.services.greenline import ingest_sale_webhook, verify_webhook_signature, GreenlineClient
+from app.services.blaze import ingest_blaze_webhook, verify_blaze_webhook, BlazeClient
 from app.services.reconciliation import run_reconciliation
 from app.reports.exporter import ReportExporter, UnresolvedDiscrepancyError
 
@@ -67,8 +73,41 @@ async def receive_greenline_webhook(request: Request, db: DB):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     payload = await request.json()
-    webhook = GreenlineSaleWebhook(**payload)
+    try:
+        webhook = GreenlineSaleWebhook(**payload)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
     event = await ingest_sale_webhook(db, webhook)
+
+    return {
+        "accepted": True,
+        "duplicate": event is None,
+        "event_id": webhook.event_id,
+    }
+
+
+# ── BLAZE Webhook Ingestion ──────────────────────────────────────────────────
+
+@app.post("/webhooks/blaze", status_code=202)
+async def receive_blaze_webhook(request: Request, db: DB):
+    """
+    Accept BLAZE POS webhooks. HMAC-verified, idempotent.
+    Payload is normalised to the canonical internal format before storage.
+    Returns 202 even for duplicates (safe retry).
+    """
+    body = await request.body()
+
+    signature = request.headers.get("X-Blaze-Signature", "")
+    from app.core.config import get_settings
+    if get_settings().blaze_webhook_secret and not verify_blaze_webhook(body, signature):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    payload = await request.json()
+    try:
+        webhook = BlazeSaleWebhook(**payload)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
+    event = await ingest_blaze_webhook(db, webhook)
 
     return {
         "accepted": True,
@@ -85,9 +124,14 @@ async def trigger_reconciliation(
 ):
     """
     Manually trigger reconciliation for a location + date.
+    Routes to the correct POS client based on the location's pos_system.
     In production, this is called by Celery beat at 23:59.
     """
-    client = GreenlineClient()
+    loc = await db.get(Location, location_id)
+    if not loc:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    client = BlazeClient() if loc.pos_system == "blaze" else GreenlineClient()
     snapshot = await client.fetch_inventory_snapshot(db, location_id)
     summary = await run_reconciliation(db, location_id, report_date, snapshot)
 
@@ -161,9 +205,9 @@ async def list_discrepancies(location_id: str, db: DB, acknowledged: bool = Fals
 
 @app.post("/discrepancies/{discrepancy_id}/acknowledge")
 async def acknowledge_discrepancy(
-    discrepancy_id: str, body: AcknowledgeDiscrepancy, db: DB
+    discrepancy_id: uuid.UUID, body: AcknowledgeDiscrepancy, db: DB
 ):
-    from datetime import datetime
+    from datetime import datetime, UTC
     disc = await db.get(ComplianceDiscrepancy, discrepancy_id)
     if not disc:
         raise HTTPException(status_code=404, detail="Discrepancy not found")
@@ -172,7 +216,7 @@ async def acknowledge_discrepancy(
 
     disc.acknowledged = True
     disc.acknowledged_by = body.acknowledged_by
-    disc.acknowledged_at = datetime.utcnow()
+    disc.acknowledged_at = datetime.now(UTC)
     disc.notes = body.notes
     await db.commit()
 

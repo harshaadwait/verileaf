@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, UTC
 import random
 
 from app.models.schemas import (
@@ -100,7 +100,7 @@ def mock_sale_webhook(
         event_id=f"EVT-{uuid.uuid4().hex[:12]}",
         location_id=location_id,
         sale_id=f"SALE-{uuid.uuid4().hex[:8]}",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         line_items=line_items,
     )
 
@@ -141,7 +141,7 @@ def mock_inventory_snapshot(
 
     return GreenlineInventorySnapshot(
         location_id=location_id,
-        snapshot_time=datetime.utcnow(),
+        snapshot_time=datetime.now(UTC),
         items=items,
     )
 

@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     greenline_base_url: str = "https://api.getgreenline.co/v1"
     greenline_webhook_secret: str = ""
 
+    # BLAZE POS
+    blaze_base_url: str = "https://api.blaze.me/v1"
+    blaze_webhook_secret: str = ""
+    blaze_software_id: str = ""             # required by BLAZE partner integrations
+
     # Encryption (generate once: Fernet.generate_key().decode())
     fernet_key: str = ""
 

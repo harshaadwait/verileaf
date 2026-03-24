@@ -65,19 +65,16 @@ class GreenlineLineItem(BaseModel):
 
 
 class GreenlineSaleWebhook(BaseModel):
+    """
+    Canonical internal POS event. Greenline webhooks are validated directly
+    into this type; other POS systems normalise into it before ingestion.
+    """
     event_type: EventType
-    event_id: str = Field(description="Idempotency key from Greenline")
+    event_id: str = Field(description="Idempotency key — unique per POS event")
     location_id: str
     sale_id: str
     timestamp: datetime
     line_items: list[GreenlineLineItem]
-
-    @field_validator("event_type")
-    @classmethod
-    def must_be_sale(cls, v: EventType) -> EventType:
-        if v not in (EventType.SALE_CREATED, EventType.SALE_VOIDED):
-            raise ValueError(f"Expected sale event, got {v}")
-        return v
 
 
 class GreenlineInventoryItem(BaseModel):
@@ -119,6 +116,48 @@ class ReconciliationSummary(BaseModel):
 class AcknowledgeDiscrepancy(BaseModel):
     acknowledged_by: str
     notes: str = ""
+
+
+# ── Canonical POS-agnostic aliases ──────────────────────────────────────────
+# Both Greenline and BLAZE normalise their snapshots to these types before
+# the reconciliation engine sees them.
+
+PosInventoryItem = GreenlineInventoryItem
+PosInventorySnapshot = GreenlineInventorySnapshot
+
+
+# ── BLAZE POS Schemas ────────────────────────────────────────────────────────
+
+class BlazeEventType(str, Enum):
+    SALE_CREATED        = "SALE_CREATED"
+    SALE_VOIDED         = "SALE_VOIDED"
+    INVENTORY_RECEIVED  = "INVENTORY_RECEIVED"
+    INVENTORY_ADJUSTED  = "INVENTORY_ADJUSTED"
+
+
+class BlazeLineItem(BaseModel):
+    """A single line item as sent by BLAZE POS webhooks."""
+    product_id: str
+    sku: str = ""
+    product_name: str = ""
+    category: str                           # raw BLAZE string, e.g. "FLOWER"
+    quantity: int = Field(ge=0)
+    unit_weight_grams: Decimal = Field(ge=0, description="Weight of one unit in grams")
+    unit_price: Decimal = Field(ge=0)
+
+
+class BlazeTransactionData(BaseModel):
+    transaction_id: str = ""               # empty for inventory events
+    items: list[BlazeLineItem]
+
+
+class BlazeSaleWebhook(BaseModel):
+    """BLAZE webhook payload as received from the BLAZE platform."""
+    event_type: BlazeEventType
+    event_id: str = Field(description="Idempotency key from BLAZE")
+    location_id: str
+    occurred_at: datetime
+    data: BlazeTransactionData
 
 
 # ── Report Request ──────────────────────────────────────────────────────────

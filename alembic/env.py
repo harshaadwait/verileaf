@@ -3,7 +3,12 @@ Alembic async migration environment for VeriLeaf.
 Supports autogenerate from SQLAlchemy 2.0 mapped models.
 """
 import asyncio
+import sys
+import os
 from logging.config import fileConfig
+
+# Ensure the project root is on sys.path so `app` is importable
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from alembic import context
 from sqlalchemy import pool
@@ -17,10 +22,16 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# Use DATABASE_URL from environment if set (Docker / CI), else fall back to alembic.ini
+_db_url = os.environ.get("VERILEAF_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+# Ensure asyncpg driver for async migrations
+if _db_url and "postgresql://" in _db_url and "asyncpg" not in _db_url:
+    _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (emit SQL to stdout)."""
-    url = config.get_main_option("sqlalchemy.url")
+    url = _db_url
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -43,10 +54,7 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        # Override asyncpg driver for migrations
-        url=config.get_main_option("sqlalchemy.url").replace(
-            "postgresql://", "postgresql+asyncpg://"
-        ) if "asyncpg" not in (config.get_main_option("sqlalchemy.url") or "") else None,
+        url=_db_url,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

@@ -25,11 +25,12 @@ class Base(DeclarativeBase):
 class Location(Base):
     __tablename__ = "locations"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)       # Greenline location ID
+    id: Mapped[str] = mapped_column(String, primary_key=True)       # POS location ID
     company_id: Mapped[str] = mapped_column(String, index=True)
     store_name: Mapped[str] = mapped_column(String, default="")
     province: Mapped[str] = mapped_column(String(2))                 # ON, AB, BC, QC …
     api_token_enc: Mapped[str] = mapped_column(String)               # Fernet-encrypted
+    pos_system: Mapped[str] = mapped_column(String(20), default="greenline")  # greenline | blaze
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

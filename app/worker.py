@@ -14,6 +14,7 @@ from celery.schedules import crontab
 
 from app.core.config import get_settings, AsyncSessionLocal
 from app.services.greenline import GreenlineClient
+from app.services.blaze import BlazeClient
 from app.services.reconciliation import run_reconciliation
 
 settings = get_settings()
@@ -61,7 +62,9 @@ def reconcile_single_location(self, location_id: str):
 
 
 async def _reconcile_one(location_id: str):
-    client = GreenlineClient()
+    from app.models.models import Location
     async with AsyncSessionLocal() as session:
+        loc = await session.get(Location, location_id)
+        client = BlazeClient() if (loc and loc.pos_system == "blaze") else GreenlineClient()
         snapshot = await client.fetch_inventory_snapshot(session, location_id)
         await run_reconciliation(session, location_id, date.today(), snapshot)
